@@ -301,6 +301,9 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * 固定 `setuptools==81.0.0` 并在自检中显式导入 `pkg_resources`。setuptools 82
   起不再附带该模块，而当前 OpenMMLab 依赖链仍需要它；已有 `ca21` 环境再次执行
   `sh setup.sh` 即会自动降级并修复。
+* 补充 `future==1.0.0` 和 `tensorboard==2.21.0`。项目的
+  `TensorboardVisBackend` 在 Runner 初始化时会导入这两项；安装后自检现在
+  会实际导入 `torch.utils.tensorboard.SummaryWriter`，防止训练启动后才发现缺包。
 * `tools/train.py` 支持 `--resume` 自动或指定 checkpoint，且 `--amp` 能处理配置中
   省略 `optim_wrapper.type` 的常见写法；`tools/dist_train.sh` 改用 PyTorch 2.x 的
   `torch.distributed.run` 并补齐参数引用和错误退出。

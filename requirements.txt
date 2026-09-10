@@ -45,6 +45,12 @@ mmdet==3.3.0           # PyPI 包名是 mmdet，不是 mmdetection（import 名�
 # -----------------------------------------------------------------------------
 # C. 模型与训练依赖
 # -----------------------------------------------------------------------------
+# default_runtime.py 启用了 MMEngine TensorboardVisBackend。MMEngine 在初始化
+# backend 时会同时检查 future 和 tensorboard，缺失时训练会在 Runner
+# 创建阶段直接退出。
+future==1.0.0
+tensorboard==2.21.0
+
 # timm：代码里同时用了新旧两条导入路径
 #   cloud_adapter/models/backbones/cloud_adapter.py   -> from timm.layers import ...
 #   cloud_adapter/models/backbones/adapter_modules.py -> from timm.models.layers import ...
