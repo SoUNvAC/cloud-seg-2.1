@@ -8,7 +8,7 @@
 
 set -Eeuo pipefail
 
-ENV_NAME="${CLOUD_ADAPTER_ENV:-cloud-adapter}"
+ENV_NAME="${CLOUD_ADAPTER_ENV:-ca21}"
 PYTHON_VERSION="3.10"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -52,7 +52,7 @@ conda run --no-capture-output --name "$ENV_NAME" python -m pip check
 
 log "running import and CUDA-operator smoke test"
 conda run --no-capture-output --name "$ENV_NAME" python -c \
-    "import torch, mmcv, mmengine, mmseg, mmdet, xformers; from mmcv.ops import MultiScaleDeformableAttention; import cloud_adapter; expected={'torch':'2.1.2','mmcv':'2.1.0','mmengine':'0.10.4','mmseg':'1.2.2','mmdet':'3.3.0','xformers':'0.0.23.post1'}; actual={'torch':torch.__version__.split('+')[0],'mmcv':mmcv.__version__,'mmengine':mmengine.__version__,'mmseg':mmseg.__version__,'mmdet':mmdet.__version__,'xformers':xformers.__version__}; mismatched={k:(actual[k],v) for k,v in expected.items() if actual[k] != v}; assert not mismatched, f'version mismatch: {mismatched}'; print('versions:', actual); print('CUDA available:', torch.cuda.is_available()); print('Cloud-Adapter import: OK')"
+    "import torch, mmcv, mmengine, mmseg, mmdet, xformers; from mmcv.ops import MultiScaleDeformableAttention; import cloud_adapter; expected={'torch':'2.1.2','mmcv':'2.1.0','mmengine':'0.10.4','mmseg':'1.2.2','mmdet':'3.3.0','xformers':'0.0.23.post1'}; actual={'torch':torch.__version__.split('+')[0],'mmcv':mmcv.__version__,'mmengine':mmengine.__version__,'mmseg':mmseg.__version__,'mmdet':mmdet.__version__,'xformers':xformers.__version__}; mismatched={k:(actual[k],v) for k,v in expected.items() if actual[k] != v}; assert not mismatched, f'version mismatch: {mismatched}'; print('versions:', actual); print('CUDA available:', torch.cuda.is_available()); print('ca21 import: OK')"
 
 log "environment is ready"
 printf '\nRun:\n  conda activate %s\n\n' "$ENV_NAME"
