@@ -5,10 +5,7 @@
 # `x + attn(x, cache)` exactly as upstream. The diagnostics hooks still record
 # per-layer residual statistics with an implicit alpha of 1.0, which keeps the
 # S0 curves in the §8 plots comparable with the scaled variants.
-_base_ = [
-    "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py",
-    "_base_experiment_01.py",
-]
+_base_ = "_base_experiment_01.py"
 
 model = dict(
     backbone=dict(

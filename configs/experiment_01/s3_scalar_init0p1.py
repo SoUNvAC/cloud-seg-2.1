@@ -2,10 +2,7 @@
 #
 # This is the protocol §5 default and the value used for the main experiment
 # unless the validation screening picks another one.
-_base_ = [
-    "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py",
-    "_base_experiment_01.py",
-]
+_base_ = "_base_experiment_01.py"
 
 model = dict(
     backbone=dict(

@@ -1,15 +1,14 @@
 # Shared settings for experiment 01 (layer-scale injection).
 #
-# Inherit this AFTER the baseline adapter config, e.g.
+# Single inheritance chain: this file overrides the upstream baseline config,
+# and each variant config (s0..s5, main) inherits THIS file. The overrides
+# below win over the upstream defaults (child overrides base in mmengine).
 #
-#     _base_ = [
-#         "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py",
-#         "_base_experiment_01.py",
-#     ]
-#
-# so that these values win over the upstream defaults.
+# Do NOT list this file as a sibling of the adapter config in a variant's
+# `_base_` — mmengine forbids two sibling bases from defining the same key
+# ("Duplicate key is not allowed among bases").
 
-_base_ = ["../_base_/datasets/cloudsen12_high_l1c.py"]
+_base_ = "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py"
 
 crop_size = (512, 512)
 

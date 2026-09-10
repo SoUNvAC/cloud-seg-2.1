@@ -11,10 +11,7 @@
 #         randomness.seed=13
 #
 # The three main runs use seeds 13 / 42 / 3407.
-_base_ = [
-    "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py",
-    "_base_experiment_01.py",
-]
+_base_ = "_base_experiment_01.py"
 
 model = dict(
     backbone=dict(

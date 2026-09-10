@@ -2,10 +2,7 @@
 #
 # The adapter starts as the identity map on the frozen features and has to
 # learn the residual from scratch.
-_base_ = [
-    "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py",
-    "_base_experiment_01.py",
-]
+_base_ = "_base_experiment_01.py"
 
 model = dict(
     backbone=dict(

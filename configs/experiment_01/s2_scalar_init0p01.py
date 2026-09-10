@@ -1,8 +1,5 @@
 # Experiment 01 / S2 — layer-wise scalar alpha, initialised at 0.01.
-_base_ = [
-    "../adapter/cloud_adapter_pmaa_convnext_lora_16_adapter_all.py",
-    "_base_experiment_01.py",
-]
+_base_ = "_base_experiment_01.py"
 
 model = dict(
     backbone=dict(
