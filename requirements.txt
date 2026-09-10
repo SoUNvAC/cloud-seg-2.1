@@ -1,0 +1,98 @@
+# =============================================================================
+# Cloud-Adapter (TGRS 2025) — 实验 01 运行环境
+#
+# 目标机器：NVIDIA RTX 4090 D 24GB / CUDA 12.1
+# 建议 Python 3.10（mmcv 预编译轮子覆盖 cp38–cp311）
+#
+#   conda create -n cloud-adapter python=3.10 -y
+#   conda activate cloud-adapter
+#   pip install -r requirements.txt
+#
+# 注意：mmcv / mmsegmentation / mmdetection 之间存在**硬版本区间**，
+# 不是随便挑最新版就行。约束已从上游源码逐条核对：
+#
+#   mmdet 3.3.0 : 2.0.0rc4 <= mmcv < 2.2.0 ，0.7.1 <= mmengine < 1.0.0
+#   mmseg 1.2.2 : 2.0.0rc4 <= mmcv < 2.2.0 ，0.5.0 <= mmengine < 1.0.0
+#
+# 因此 mmcv 只能取 2.1.x —— 2.2.0 会被上面两个包直接 assert 掉。
+# mmcv 必须是**完整版**（含 CUDA 算子）：配置里的 mmdet.MSDeformAttnPixelDecoder
+# 需要 mmcv.ops 的多尺度可变形注意力，mmcv-lite 装不起来。
+#
+# 下面前两行 index 不能删：PyPI 上 mmcv 2.x 没有预编译轮子，没有这个
+# find-links，pip 会退化成从源码编译（需要完整 CUDA 工具链，基本必失败）。
+# =============================================================================
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+-f https://download.openmmlab.com/mmcv/dist/cu121/torch2.1/index.html
+
+# -----------------------------------------------------------------------------
+# A. 深度学习框架（与上面的 mmcv 轮子 ABI 绑定：torch 必须是 2.1.x）
+# -----------------------------------------------------------------------------
+torch==2.1.2
+torchvision==0.16.2
+
+# -----------------------------------------------------------------------------
+# B. OpenMMLab 栈
+# -----------------------------------------------------------------------------
+mmengine==0.10.4
+mmcv==2.1.0
+mmsegmentation==1.2.2
+mmdetection==3.3.0
+
+# -----------------------------------------------------------------------------
+# C. 模型与训练依赖
+# -----------------------------------------------------------------------------
+# timm：代码里同时用了新旧两条导入路径
+#   cloud_adapter/models/backbones/cloud_adapter.py   -> from timm.layers import ...
+#   cloud_adapter/models/backbones/adapter_modules.py -> from timm.models.layers import ...
+# 0.9.16 与 1.x 都保留了两条路径和用到的符号（CondConv2d / create_act_layer /
+# get_norm_act_layer / trunc_normal_ / DropPath 等），但本仓库是按 0.9.x 写的，
+# 这里锁 0.9.16 最稳。
+timm==0.9.16
+einops>=0.6.1
+
+# numpy 必须 < 2：mmcv 2.1.0 的预编译轮子是对着 numpy 1.x 编的，
+# numpy 2.x 会触发 ABI 不兼容（_ARRAY_API not found / 直接崩）。
+numpy<2
+scipy
+matplotlib
+
+# mmseg 的读取与变换经过 mmcv.imread，依赖 opencv
+opencv-python
+Pillow
+tqdm
+pycocotools          # mmdet 3.3.0 runtime 依赖
+terminaltables       # mmdet 3.3.0 runtime 依赖
+shapely              # mmdet 3.3.0 runtime 依赖
+
+# -----------------------------------------------------------------------------
+# D. 数据集准备（把原始 .dat 转成 data/cloudsen12_high_l1c/{img_dir,ann_dir}/）
+#    只有跑 tools/convert_datasets/create_l1c_l2a.py 时才需要
+# -----------------------------------------------------------------------------
+albumentations<2     # 代码里用了 always_apply=，albumentations 2.x 已删除该参数
+tifffile             # utils/stretch.py 用到
+
+# =============================================================================
+# E. 故意不装（原 requirements.txt 里有，但本仓库代码实际不 import）
+#    ftfy / prettytable / regex —— 全仓库 grep 无任何 import，属于上游遗留
+#
+# F. 可选，装了会影响数值，装之前想清楚
+#    xformers
+#      cloud_adapter/models/backbones/dino_layers/ 里的注意力层检测到 xformers
+#      就会走 memory_efficient_attention，与 PyTorch 原生注意力**数值不完全相同**。
+#      是否安装取决于 74.18 那次实验的环境（仓库里没有记录），
+#      所以 §3 基线复现门禁对这一点很敏感。
+#      建议：不装（保持原生注意力路径），或在跑之前设 XFORMERS_DISABLED=1。
+#      见 dino_layers/attention.py:21 的 XFORMERS_ENABLED 开关。
+#
+#    thop / mmpretrain / pavi / torchgeo / rasterio / natsort / cityscapesscripts
+#    / rich / mmeval / huggingface_hub
+#      分别只被以下非本实验路径使用，缺失不影响 CloudSEN12_L1C 训练与评测：
+#        thop                -> pmaa.py 里的 FLOPs 统计函数内（函数内 import）
+#        mmpretrain          -> reins_convnext.py，backbones/__init__ 里已 try/except
+#        pavi                -> beit.py 的 pavi:// 权重加载分支（函数内 import）
+#        torchgeo rasterio natsort -> dataset/l8_biome.py（L8 Biome 数据集）
+#        cityscapesscripts   -> tools/convert_datasets/cityscapes.py
+#        rich mmeval         -> tools/eval_l8_scene.py / mmseg_vis.py
+#        huggingface_hub     -> utils/upload_zip_to_hub.py
+# =============================================================================
