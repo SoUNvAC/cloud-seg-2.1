@@ -51,6 +51,11 @@ mmdetection==3.3.0
 timm==0.9.16
 einops>=0.6.1
 
+# thop / xformers 看着像"可选的效率工具"，实际是**硬依赖**——见下方 F 节。
+# 它们位于 `import cloud_adapter` 的模块级导入链上，缺一个就直接 ModuleNotFoundError。
+thop
+xformers
+
 # numpy 必须 < 2：mmcv 2.1.0 的预编译轮子是对着 numpy 1.x 编的，
 # numpy 2.x 会触发 ABI 不兼容（_ARRAY_API not found / 直接崩）。
 numpy<2
@@ -76,23 +81,40 @@ tifffile             # utils/stretch.py 用到
 # E. 故意不装（原 requirements.txt 里有，但本仓库代码实际不 import）
 #    ftfy / prettytable / regex —— 全仓库 grep 无任何 import，属于上游遗留
 #
-# F. 可选，装了会影响数值，装之前想清楚
-#    xformers
-#      cloud_adapter/models/backbones/dino_layers/ 里的注意力层检测到 xformers
-#      就会走 memory_efficient_attention，与 PyTorch 原生注意力**数值不完全相同**。
-#      是否安装取决于 74.18 那次实验的环境（仓库里没有记录），
-#      所以 §3 基线复现门禁对这一点很敏感。
-#      建议：不装（保持原生注意力路径），或在跑之前设 XFORMERS_DISABLED=1。
-#      见 dino_layers/attention.py:21 的 XFORMERS_ENABLED 开关。
+# F. 为什么 thop / xformers 是硬依赖（不是"效率优化可选装"）
 #
-#    thop / mmpretrain / pavi / torchgeo / rasterio / natsort / cityscapesscripts
-#    / rich / mmeval / huggingface_hub
-#      分别只被以下非本实验路径使用，缺失不影响 CloudSEN12_L1C 训练与评测：
-#        thop                -> pmaa.py 里的 FLOPs 统计函数内（函数内 import）
-#        mmpretrain          -> reins_convnext.py，backbones/__init__ 里已 try/except
-#        pavi                -> beit.py 的 pavi:// 权重加载分支（函数内 import）
-#        torchgeo rasterio natsort -> dataset/l8_biome.py（L8 Biome 数据集）
-#        cityscapesscripts   -> tools/convert_datasets/cityscapes.py
-#        rich mmeval         -> tools/eval_l8_scene.py / mmseg_vis.py
-#        huggingface_hub     -> utils/upload_zip_to_hub.py
+#    import cloud_adapter
+#      -> models/__init__ -> backbones/__init__.py:3  from .reins_eva_02 import ReinsEVA2
+#           (backbones/__init__ 是**模块级无条件导入**，没有 try/except 包裹)
+#      -> reins_eva_02.py:1     from .eva_02 import EVA2
+#      -> eva_02.py:22          from .beit import load_checkpoint
+#      -> eva_02.py:26          import xformers.ops as xops        <-- 无条件，非 try/except
+#      -> backbones/__init__.py:6  from .myreinstoken import MyReinsToken
+#      -> myreinstoken.py:9     from thop import profile,clever_format  <-- 无条件
+#
+#    即：只要 import cloud_adapter，这两个包就必须在。
+#
+#    xformers 额外还有一个**影响数值**的作用，见 G 节。
+#
+# G. xformers 与复现性（§3 门禁敏感项）
+#    dino_layers/attention.py:21 有 XFORMERS_ENABLED 开关（默认开）。
+#    开启时 DINOv2 注意力走 memory_efficient_attention，与 PyTorch 原生
+#    scaled_dot_product_attention **数值不完全相同**，会轻微改变训练轨迹。
+#
+#    74.18 那次实验的环境没有记录，所以无法确定它当年走的是哪条路径。
+#    但现在的训练机上 xformers 是装的且生效的（跑 count_params 时会打印
+#    "xFormers is available (Attention/SwiGLU/Block)" 三条 warning）。
+#
+#    这不影响实验 01 的内部有效性：B0 与 LS* 跑在同一环境，配对比较成立。
+#    只影响 §3 基线 gate 与论文 74.18 的**绝对值可比性**。
+#    如果 gate 差了零点几个 mIoU 过不去，先想到这一条。
+#    对照实验：XFORMERS_DISABLED=1 重跑 B0_seed42，看 mIoU 漂多少。
+#
+# H. 其余可选，缺失不影响 CloudSEN12_L1C 训练与评测
+#      mmpretrain          -> reins_convnext.py:1，backbones/__init__.py:18 已 try/except
+#      pavi                -> beit.py 的 pavi:// 权重加载分支（函数内 import）
+#      torchgeo rasterio natsort -> dataset/l8_biome.py（L8 Biome 数据集）
+#      cityscapesscripts   -> tools/convert_datasets/cityscapes.py
+#      rich mmeval         -> tools/eval_l8_scene.py / mmseg_vis.py
+#      huggingface_hub     -> utils/upload_zip_to_hub.py
 # =============================================================================
