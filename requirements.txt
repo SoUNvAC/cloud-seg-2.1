@@ -8,7 +8,7 @@
 #   conda activate cloud-adapter
 #   pip install -r requirements.txt
 #
-# 注意：mmcv / mmsegmentation / mmdetection 之间存在**硬版本区间**，
+# 注意：mmcv / mmsegmentation / mmdet 之间存在**硬版本区间**，
 # 不是随便挑最新版就行。约束已从上游源码逐条核对：
 #
 #   mmdet 3.3.0 : 2.0.0rc4 <= mmcv < 2.2.0 ，0.7.1 <= mmengine < 1.0.0
@@ -37,7 +37,7 @@ torchvision==0.16.2
 mmengine==0.10.4
 mmcv==2.1.0
 mmsegmentation==1.2.2
-mmdetection==3.3.0
+mmdet==3.3.0           # PyPI 包名是 mmdet，不是 mmdetection（import 名也是 mmdet）
 
 # -----------------------------------------------------------------------------
 # C. 模型与训练依赖
