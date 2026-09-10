@@ -1,16 +1,16 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 
 # Reproducible Conda bootstrap for Cloud-Adapter / experiment 01.
 #
 # Usage:
-#   bash setup.sh                    # creates/updates "cloud-adapter"
-#   CLOUD_ADAPTER_ENV=myenv bash setup.sh
+#   sh setup.sh                    # creates/updates "ca21"
+#   CLOUD_ADAPTER_ENV=myenv sh setup.sh
 
-set -Eeuo pipefail
+set -eu
 
 ENV_NAME="${CLOUD_ADAPTER_ENV:-ca21}"
 PYTHON_VERSION="3.10"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd -P "$(dirname "$0")" && pwd)"
 
 log() {
     printf '[setup] %s\n' "$*"
@@ -35,13 +35,13 @@ fi
 
 ACTUAL_PYTHON="$(conda run --name "$ENV_NAME" python -c \
     'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' | tr -d '\r')"
-[[ "$ACTUAL_PYTHON" == "$PYTHON_VERSION" ]] || die \
+[ "$ACTUAL_PYTHON" = "$PYTHON_VERSION" ] || die \
     "environment '$ENV_NAME' uses Python $ACTUAL_PYTHON; Python $PYTHON_VERSION is required."
 
 cd "$SCRIPT_DIR"
 log "upgrading packaging tools"
 conda run --no-capture-output --name "$ENV_NAME" \
-    python -m pip install --upgrade pip setuptools wheel
+    python -m pip install --upgrade pip wheel "setuptools==81.0.0"
 
 log "installing pinned CUDA 12.1 / PyTorch 2.1 dependencies"
 conda run --no-capture-output --name "$ENV_NAME" \
@@ -52,7 +52,7 @@ conda run --no-capture-output --name "$ENV_NAME" python -m pip check
 
 log "running import and CUDA-operator smoke test"
 conda run --no-capture-output --name "$ENV_NAME" python -c \
-    "import torch, mmcv, mmengine, mmseg, mmdet, xformers; from mmcv.ops import MultiScaleDeformableAttention; import cloud_adapter; expected={'torch':'2.1.2','mmcv':'2.1.0','mmengine':'0.10.4','mmseg':'1.2.2','mmdet':'3.3.0','xformers':'0.0.23.post1'}; actual={'torch':torch.__version__.split('+')[0],'mmcv':mmcv.__version__,'mmengine':mmengine.__version__,'mmseg':mmseg.__version__,'mmdet':mmdet.__version__,'xformers':xformers.__version__}; mismatched={k:(actual[k],v) for k,v in expected.items() if actual[k] != v}; assert not mismatched, f'version mismatch: {mismatched}'; print('versions:', actual); print('CUDA available:', torch.cuda.is_available()); print('ca21 import: OK')"
+    "import pkg_resources, setuptools, torch, mmcv, mmengine, mmseg, mmdet, xformers; from mmcv.ops import MultiScaleDeformableAttention; import cloud_adapter; expected={'setuptools':'81.0.0','torch':'2.1.2','mmcv':'2.1.0','mmengine':'0.10.4','mmseg':'1.2.2','mmdet':'3.3.0','xformers':'0.0.23.post1'}; actual={'setuptools':setuptools.__version__,'torch':torch.__version__.split('+')[0],'mmcv':mmcv.__version__,'mmengine':mmengine.__version__,'mmseg':mmseg.__version__,'mmdet':mmdet.__version__,'xformers':xformers.__version__}; mismatched={k:(actual[k],v) for k,v in expected.items() if actual[k] != v}; assert not mismatched, f'version mismatch: {mismatched}'; print('versions:', actual); print('CUDA available:', torch.cuda.is_available()); print('Cloud-Adapter import: OK')"
 
 log "environment is ready"
 printf '\nRun:\n  conda activate %s\n\n' "$ENV_NAME"

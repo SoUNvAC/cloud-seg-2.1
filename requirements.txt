@@ -4,8 +4,8 @@
 # 目标机器：NVIDIA RTX 4090 D 24GB / CUDA 12.1
 # 建议 Python 3.10（mmcv 预编译轮子覆盖 cp38–cp311）
 #
-#   bash setup.sh
-#   conda activate cloud-adapter
+#   sh setup.sh
+#   conda activate ca21
 #
 # 注意：mmcv / mmsegmentation / mmdet 之间存在**硬版本区间**，
 # 不是随便挑最新版就行。约束已从上游源码逐条核对：
@@ -23,6 +23,10 @@
 
 --extra-index-url https://download.pytorch.org/whl/cu121
 -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.1/index.html
+
+# OpenMMLab 的旧依赖链仍会 import pkg_resources。setuptools 82.0.0 起已移除
+# 该模块，因此必须固定在最后一个仍提供它的主版本。
+setuptools==81.0.0
 
 # -----------------------------------------------------------------------------
 # A. 深度学习框架（与上面的 mmcv 轮子 ABI 绑定：torch 必须是 2.1.x）

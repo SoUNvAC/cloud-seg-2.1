@@ -227,11 +227,11 @@ optim_wrapper = dict(paramwise_cfg=dict(custom_keys={".alpha": alpha_multi}))
 在 Linux/WSL 训练机（建议 ≥16 GB NVIDIA GPU）上，从仓库根目录执行：
 
 ```bash
-# 0. 一键创建/更新 cloud-adapter Conda 环境并做导入/算子自检
-bash setup.sh
-conda activate cloud-adapter
+# 0. 一键创建/更新 ca21 Conda 环境并做导入/算子自检
+sh setup.sh
+conda activate ca21
 
-# 可用自定义环境名：CLOUD_ADAPTER_ENV=myenv bash setup.sh
+# 可用其他环境名：CLOUD_ADAPTER_ENV=myenv sh setup.sh
 
 # 1. 确认数据集与 VFM 权重就位
 #    data/cloudsen12_high_l1c/{img_dir,ann_dir}/{train,val,test}
@@ -293,10 +293,14 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 
 本轮修复：
 
-* 新增幂等的 `setup.sh`，固定 Python 3.10、PyTorch 2.1.2+CUDA 12.1、
+* 新增兼容 POSIX sh/Bash 的幂等 `setup.sh`（默认环境名 `ca21`），固定 Python
+  3.10、PyTorch 2.1.2+CUDA 12.1、
   mmcv/mmengine/mmseg/mmdet 兼容组合；`xformers==0.0.23.post1` 与 PyTorch 2.1.2
   精确绑定，避免 pip 解析时升级 PyTorch；安装末尾执行 `pip check`、版本断言、
   `mmcv.ops` 与项目导入自检。
+* 固定 `setuptools==81.0.0` 并在自检中显式导入 `pkg_resources`。setuptools 82
+  起不再附带该模块，而当前 OpenMMLab 依赖链仍需要它；已有 `ca21` 环境再次执行
+  `sh setup.sh` 即会自动降级并修复。
 * `tools/train.py` 支持 `--resume` 自动或指定 checkpoint，且 `--amp` 能处理配置中
   省略 `optim_wrapper.type` 的常见写法；`tools/dist_train.sh` 改用 PyTorch 2.x 的
   `torch.distributed.run` 并补齐参数引用和错误退出。
@@ -320,9 +324,9 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * `python tools/experiment_01/analyze.py --help`：退出码 0；
 * `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
   通过；
-* `bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
+* `sh -n setup.sh`、`bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
 * 使用不执行安装的伪 `conda` 命令走完 `setup.sh` 控制流：退出码 0；
 * `git diff --check`：通过。
 
-未执行：`bash setup.sh` 的真实安装、模型构建、前向/反向、训练与评测。本机没有
+未执行：`sh setup.sh` 的真实安装、模型构建、前向/反向、训练与评测。本机没有
 Conda、数据集和 backbone checkpoint，且 GTX 1060 6 GB 不满足协议训练显存要求。
