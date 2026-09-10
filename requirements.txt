@@ -69,6 +69,9 @@ tqdm
 pycocotools          # mmdet 3.3.0 runtime 依赖
 terminaltables       # mmdet 3.3.0 runtime 依赖
 shapely              # mmdet 3.3.0 runtime 依赖
+ftfy                 # mmseg.utils.tokenizer 在运行时 import，但 mmseg 把它标成可选依赖
+regex                # 与 ftfy 同处 mmseg tokenizer 路径，同样要显式装
+prettytable          # mmseg 结果表格打印用；上游原 requirements 也列了
 
 # -----------------------------------------------------------------------------
 # D. 数据集准备（把原始 .dat 转成 data/cloudsen12_high_l1c/{img_dir,ann_dir}/）
@@ -78,8 +81,18 @@ albumentations<2     # 代码里用了 always_apply=，albumentations 2.x 已删
 tifffile             # utils/stretch.py 用到
 
 # =============================================================================
-# E. 故意不装（原 requirements.txt 里有，但本仓库代码实际不 import）
-#    ftfy / prettytable / regex —— 全仓库 grep 无任何 import，属于上游遗留
+# E. ftfy / regex / prettytable 为什么必须显式列（而不是"上游遗留"）
+#
+#    全仓库 grep 这三个名字确实都搜不到——但**不在本仓库代码里**，不等于运行时不
+#    需要。mmseg 1.2.2 自己的 mmseg/utils/tokenizer.py 里：
+#        from ftfy import fix_text
+#    以及配套的 regex 用法。这个模块被 SAM / CLIP 之类文本-图像 backbone 的路径
+#    触发，而本仓库 backbones/__init__ 无条件导入了 CloudAdapterSamVisionTransformer
+#    与 CLIPVisionTransformer。
+#
+#    关键坑：mmseg 把 ftfy 放在 PyPI 元数据的**可选依赖**里，不是 install_requires，
+#    所以 pip install mmsegmentation 不会自动装它 → 运行时 ModuleNotFoundError。
+#    这三个包都必须显式写进 requirements。上游原 requirements.txt 列了它们，是对的。
 #
 # F. 为什么 thop / xformers 是硬依赖（不是"效率优化可选装"）
 #
