@@ -101,10 +101,29 @@ custom_hooks = [
     ),
 ]
 
-# Fixed training protocol — identical to the upstream baseline config.
+# Fixed training protocol. The upstream adapter config only contains PolyLR,
+# while the experiment protocol explicitly requires a 1,000-iteration linear
+# warm-up from 1e-6 to the base learning rate (1e-4).
 train_cfg = dict(type="IterBasedTrainLoop", max_iters=40000, val_interval=4000)
 val_cfg = dict(type="ValLoop")
 test_cfg = dict(type="TestLoop")
+param_scheduler = [
+    dict(
+        type="LinearLR",
+        start_factor=0.01,
+        begin=0,
+        end=1000,
+        by_epoch=False,
+    ),
+    dict(
+        type="PolyLR",
+        eta_min=0,
+        power=0.9,
+        begin=1000,
+        end=40000,
+        by_epoch=False,
+    ),
+]
 
 # Overridden per run by run_matrix.py via --cfg-options randomness.seed=<seed>.
 randomness = dict(seed=42)

@@ -4,10 +4,10 @@ import logging
 import os
 import os.path as osp
 
-os.chdir(osp.abspath(osp.dirname(osp.dirname(__file__))))
 import sys
 
-sys.path.append(os.curdir)
+REPO_ROOT = osp.abspath(osp.dirname(osp.dirname(__file__)))
+sys.path.insert(0, REPO_ROOT)
 from mmengine.config import Config, DictAction
 from mmengine.logging import print_log
 from mmengine.runner import Runner
@@ -23,9 +23,11 @@ def parse_args():
     parser.add_argument("--work-dir", help="the dir to save logs and models")
     parser.add_argument(
         "--resume",
-        action="store_true",
-        default=False,
-        help="resume from the latest checkpoint in the work_dir automatically",
+        nargs="?",
+        type=str,
+        const="auto",
+        default=None,
+        help="resume from the latest checkpoint, or from the supplied path",
     )
     parser.add_argument(
         "--amp",
@@ -82,7 +84,7 @@ def main():
 
     # enable automatic-mixed-precision training
     if args.amp is True:
-        optim_wrapper = cfg.optim_wrapper.type
+        optim_wrapper = cfg.optim_wrapper.get("type", "OptimWrapper")
         if optim_wrapper == "AmpOptimWrapper":
             print_log(
                 "AMP training is already enabled in your config.",
@@ -98,7 +100,12 @@ def main():
             cfg.optim_wrapper.loss_scale = "dynamic"
 
     # resume training
-    cfg.resume = args.resume
+    if args.resume is not None:
+        cfg.resume = True
+        if args.resume != "auto":
+            cfg.load_from = args.resume
+    else:
+        cfg.resume = False
 
     # build the runner from config
     if "runner_type" not in cfg:

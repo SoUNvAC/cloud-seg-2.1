@@ -32,30 +32,41 @@ class PerImageIoUMetric(IoUMetric):
     def __init__(self, per_image_path=None, **kwargs):
         super().__init__(**kwargs)
         self.per_image_path = per_image_path
-        self.per_image_records = []
 
     def process(self, data_batch: dict, data_samples) -> None:
-        if not self.format_only:
-            num_classes = len(self.dataset_meta["classes"])
-            for data_sample in data_samples:
-                pred_label = data_sample["pred_sem_seg"]["data"].squeeze()
-                label = data_sample["gt_sem_seg"]["data"].squeeze().to(pred_label)
-                intersect, pred_area, label_area, _ = self.intersect_and_union(
-                    pred_label, label, num_classes, self.ignore_index
-                )
-                self.per_image_records.append(
-                    (
-                        data_sample.get("img_path", ""),
-                        np.asarray(intersect, dtype=np.int64),
-                        np.asarray(pred_area, dtype=np.int64),
-                        np.asarray(label_area, dtype=np.int64),
-                    )
-                )
+        start = len(self.results)
         super().process(data_batch, data_samples)
+        if self.format_only:
+            return
+
+        # Store the path inside BaseMetric.results. That list is gathered from
+        # every rank before compute_metrics(), unlike an instance-local side
+        # list, so distributed evaluation produces a complete paired sample.
+        batch_results = self.results[start:]
+        if len(batch_results) != len(data_samples):
+            raise RuntimeError("IoUMetric produced an unexpected result count")
+        for offset, (areas, data_sample) in enumerate(
+            zip(batch_results, data_samples)
+        ):
+            self.results[start + offset] = (*areas, data_sample.get("img_path", ""))
 
     def compute_metrics(self, results: list) -> dict:
-        metrics = super().compute_metrics(results)
-        if self.per_image_path and self.per_image_records:
+        if self.format_only:
+            return super().compute_metrics(results)
+
+        area_results = [record[:4] for record in results]
+        metrics = super().compute_metrics(area_results)
+
+        # IoUMetric prints per-class values but only returns aggregate metrics.
+        # Return them explicitly so the experiment acceptance checks can use
+        # actual class IoUs rather than silently recording missing values.
+        total_intersect = sum(record[0] for record in area_results)
+        total_union = sum(record[1] for record in area_results)
+        class_iou = (total_intersect / total_union).cpu().numpy() * 100.0
+        for class_name, value in zip(self.dataset_meta["classes"], class_iou):
+            metrics[f"IoU.{class_name}"] = float(np.round(value, 2))
+
+        if self.per_image_path and results:
             directory = osp.dirname(osp.abspath(self.per_image_path))
             if directory:
                 import os
@@ -63,12 +74,16 @@ class PerImageIoUMetric(IoUMetric):
                 os.makedirs(directory, exist_ok=True)
             np.savez_compressed(
                 self.per_image_path,
-                img_paths=np.array(
-                    [record[0] for record in self.per_image_records]
+                img_paths=np.array([record[4] for record in results]),
+                intersect=np.stack(
+                    [record[0].cpu().numpy().astype(np.int64) for record in results]
                 ),
-                intersect=np.stack([record[1] for record in self.per_image_records]),
-                pred_area=np.stack([record[2] for record in self.per_image_records]),
-                label_area=np.stack([record[3] for record in self.per_image_records]),
+                pred_area=np.stack(
+                    [record[2].cpu().numpy().astype(np.int64) for record in results]
+                ),
+                label_area=np.stack(
+                    [record[3].cpu().numpy().astype(np.int64) for record in results]
+                ),
                 classes=np.array(list(self.dataset_meta["classes"])),
             )
         return metrics

@@ -8,8 +8,9 @@
 
 ## 1. 一句话结论
 
-**代码实现已完成并可执行；实验本身在本机无法运行，因此协议 §10 的七条主验收
-条件目前全部为"未记录"，本次不构成成功，也不构成失败。**
+**环境建立、训练入口、监控、评测和断点续跑代码已修复并通过静态与 dry-run
+验证；实验本身在本机无法运行，因此协议 §10 的七条主验收条件目前全部为
+"未记录"，本次不构成成功，也不构成失败。**
 
 判定依据（本机实测）：
 
@@ -18,13 +19,15 @@
 | `data/cloudsen12_high_l1c` | 不存在 |
 | `checkpoints/dinov2_converted_512x512.pth` | 不存在 |
 | GPU | NVIDIA GeForce GTX 1060 6GB（6144 MiB） |
+| Conda | 未安装/不在 `PATH` |
 | `torch` / `mmengine` / `mmcv` / `mmseg` | 未安装 |
-| 训练机 | RTX 4090 D 24 GB（见 `Cloud-Adapter-light/src/EXPERIMENT_LOG.md`） |
+| 目标环境 | Python 3.10 / PyTorch 2.1.2+cu121 / mmcv 2.1.0 |
 
 协议 §2 要求 ≥16 GB 显存（batch 4 × 512×512、DINOv2-L 主干）。本机 6 GB 显存、
 且数据集与 VFM 权重均不在本地，**任何一条训练/评测/延迟测量都无法在此完成**。
-因此本报告交付的是"可直接在训练机上执行的完整实验实现 + 诚实的执行状态说明"，
-而不是实验结果。
+因此本报告交付的是"可直接在满足条件的训练机上执行的完整实验实现 + 诚实的执行
+状态说明"，而不是实验结果。`setup.sh` 未在本机真实安装依赖：当前没有 Conda，
+且 6 GB 显存不满足训练条件。
 
 ---
 
@@ -47,9 +50,9 @@
 
 | 文件 | 作用 |
 |---|---|
-| `cloud_adapter/hooks/layer_scale.py` | `LayerScaleStatsHook`（每 500 iter 写 `layer_scale_stats.jsonl`）；`LayerScaleGuardHook`（四条中止条件，触发即写 `ABORTED.json` 并停止训练） |
+| `cloud_adapter/hooks/layer_scale.py` | `LayerScaleStatsHook`（每 500 iter 写 `layer_scale_stats.jsonl`）；`LayerScaleGuardHook`（非有限数、阈值连续越界及冻结检查，触发即写 `ABORTED.json` 并停止训练） |
 | `cloud_adapter/hooks/__init__.py` | 导出上述两个 hook |
-| `cloud_adapter/per_image_metric.py` | `PerImageIoUMetric`，继承 `IoUMetric`，额外落盘每图 `intersect` / `pred_area` / `label_area`，供 §9 配对 bootstrap 使用 |
+| `cloud_adapter/per_image_metric.py` | `PerImageIoUMetric`，返回每类 IoU，并跨 rank 汇总后落盘每图 `intersect` / `pred_area` / `label_area`，供 §9 配对 bootstrap 使用 |
 | `cloud_adapter/__init__.py` | 导入 `PerImageIoUMetric` 完成注册 |
 
 每次记录（24 层 × 每层）包含：`alpha`、`alpha_mean/std/max_abs`、
@@ -57,8 +60,12 @@
 `residual_ratio = ‖α_l·δ_l‖₂ / (‖x_l‖₂ + 1e-6)`，以及该步的 loss、lr、峰值显存。
 `alpha_grad_norm` 通过 `param.register_hook` 抓取，不依赖优化器内部状态。
 
-四条中止条件：`alpha_max` 超限、`residual_ratio` 超限、连续 `streak_iters` 步触发、
-以及冻结检查（发现 DINOv2 参数意外可训练）。
+保护条件：loss、任一可训练梯度、α 或残差统计出现 NaN/Inf；`alpha_max` 或
+`residual_ratio` 连续 `streak_iters` 步超限；以及冻结的 DINOv2 参数出现非零梯度。
+
+本轮修复了三处会污染或中断训练的缺陷：S0 基线的 0 维 α 占位张量无法
+`torch.cat`；学习率错误地从不存在的 `runner.get_lr()` 读取；原保护逻辑没有真正
+检查可训练参数梯度的 NaN/Inf。
 
 ### 2.3 配置（协议 §5）
 
@@ -66,7 +73,7 @@
 
 | 文件 | 变体 | 说明 |
 |---|---|---|
-| `_base_experiment_01.py` | — | 共享基类：真实验证集、每图指标、500 iter 日志、两个 hook、`.alpha` 不进 weight decay |
+| `_base_experiment_01.py` | — | 共享基类：真实验证集、1,000 iter 线性 warm-up、每图指标、500 iter 日志、两个 hook、`.alpha` 不进 weight decay |
 | `s0_baseline_no_scale.py` | S0 | 无缩放（等于原始 Cloud-Adapter） |
 | `s1_scalar_init0.py` | S1 | scalar，init 0.0 |
 | `s2_scalar_init0p01.py` | S2 | scalar，init 0.01 |
@@ -94,6 +101,8 @@
 
 流水线特性：每个阶段在其产物已存在时自动跳过（中断后可直接重跑 `all`）；
 `--force` 重做、`--only <run_id>` 重做单个 run、`--dry-run` 只打印命令。
+不完整 run 若已有中间 checkpoint 会自动用该 checkpoint 续训；只有状态为
+`complete` 的 `metrics.json` 才会触发跳过，`ABORTED.json` 则要求先定位原因。
 基线 gate 失败会**终止流水线**（符合协议 §3：此时只能记为环境/复现失败，
 不得对结构改动下任何结论），除非显式传 `--ignore-gate`，该覆盖会写入
 `gate_override.json` 并需在报告中披露。
@@ -215,17 +224,23 @@ optim_wrapper = dict(paramwise_cfg=dict(custom_keys={".alpha": alpha_multi}))
 
 ## 6. 如何执行
 
-在训练机（RTX 4090 D 24 GB，已装好 mmseg/mmengine 环境）上：
+在 Linux/WSL 训练机（建议 ≥16 GB NVIDIA GPU）上，从仓库根目录执行：
 
 ```bash
-# 0. 确认数据集与 VFM 权重就位
+# 0. 一键创建/更新 cloud-adapter Conda 环境并做导入/算子自检
+bash setup.sh
+conda activate cloud-adapter
+
+# 可用自定义环境名：CLOUD_ADAPTER_ENV=myenv bash setup.sh
+
+# 1. 确认数据集与 VFM 权重就位
 #    data/cloudsen12_high_l1c/{img_dir,ann_dir}/{train,val,test}
 #    checkpoints/dinov2_converted_512x512.pth
 
-# 1. 先只跑 dry-run，确认命令与路径无误
+# 2. 先只跑 dry-run，确认完整命令矩阵与路径无误
 python tools/experiment_01/run_matrix.py --dry-run all
 
-# 2. 全流程（含 §3 基线 gate；gate 失败会自动停下）
+# 3. 全流程（含 §3 基线 gate；gate 失败会自动停下）
 python tools/experiment_01/run_matrix.py all
 ```
 
@@ -274,13 +289,40 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 
 ---
 
-## 8. 本机为验证代码所做的操作
+## 8. 修复记录与验证边界
 
-* `git config --global --add safe.directory D:/Cloud-Adapter-2.1`
-  （仓库属主与本机用户不一致导致 git 拒绝操作）。
-* `pip install numpy`（本机原本没有 numpy，用于在交付前对 `analyze.py` 的
-  统计核心做一次合成数据自检：已验证 bootstrap 的配对重采样、CI 包含关系、
-  以及在"明显增益 / 明显退化 / 低于阈值"三种情形下 §10 判定的极性正确。
-  自检脚本为一次性文件，已删除；合成的 `work_dirs/experiment_01` 已清除）。
-  这只影响本机 Python 环境，不影响训练机。
-* 其余改动均限于本仓库源码，未触碰环境。
+本轮修复：
+
+* 新增幂等的 `setup.sh`，固定 Python 3.10、PyTorch 2.1.2+CUDA 12.1、
+  mmcv/mmengine/mmseg/mmdet 兼容组合；`xformers==0.0.23.post1` 与 PyTorch 2.1.2
+  精确绑定，避免 pip 解析时升级 PyTorch；安装末尾执行 `pip check`、版本断言、
+  `mmcv.ops` 与项目导入自检。
+* `tools/train.py` 支持 `--resume` 自动或指定 checkpoint，且 `--amp` 能处理配置中
+  省略 `optim_wrapper.type` 的常见写法；`tools/dist_train.sh` 改用 PyTorch 2.x 的
+  `torch.distributed.run` 并补齐参数引用和错误退出。
+* 实验配置补回协议规定但上游配置遗漏的 1,000 iter warm-up：从 `1e-6` 线性升至
+  `1e-4`，再执行到 40,000 iter 的 PolyLR。
+* 修复 S0 日志崩溃、LR 记录、全量梯度有限性检查、backbone `train()` 返回值与
+  `state_dict()` 默认签名。
+* 修复 `PerImageIoUMetric`：每类 IoU 现在进入指标 dict；每图统计随
+  `BaseMetric.results` 跨 rank 汇总，且显式从 CPU tensor 转成 NumPy，避免丢样本或
+  CUDA tensor 转换错误。
+* 修复流水线把 `incomplete` 错当成已完成的问题；中断 run 会从最新 checkpoint
+  续训，评测失败也会向上返回失败状态；完整 dry-run 可继续展示 LS* 后续阶段，
+  且不再创建 run 目录或写 `gate_override.json`。
+
+已执行的无数据验证：
+
+* `python -m compileall -q cloud_adapter tools configs dataset hugging_face`：通过；
+* `python tools/experiment_01/run_matrix.py --dry-run all`：退出码 0，训练、验证、
+  测试、LS* 主实验、基准、checkpoint 校验、收集和分析命令均可生成；执行后确认
+  `work_dirs/experiment_01` 不存在（无写入副作用）；
+* `python tools/experiment_01/analyze.py --help`：退出码 0；
+* `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
+  通过；
+* `bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
+* 使用不执行安装的伪 `conda` 命令走完 `setup.sh` 控制流：退出码 0；
+* `git diff --check`：通过。
+
+未执行：`bash setup.sh` 的真实安装、模型构建、前向/反向、训练与评测。本机没有
+Conda、数据集和 backbone checkpoint，且 GTX 1060 6 GB 不满足协议训练显存要求。

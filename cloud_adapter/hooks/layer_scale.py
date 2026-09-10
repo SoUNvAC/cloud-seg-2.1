@@ -28,6 +28,7 @@ same config can drive the S0 baseline.
 """
 
 import json
+import math
 import os
 import os.path as osp
 
@@ -64,13 +65,22 @@ def _logger(runner):
 def _current_lr(runner):
     """Base learning rate of the first param group, or NaN."""
     try:
-        lrs = runner.get_lr()
+        optim_wrapper = runner.optim_wrapper
+        # OptimWrapperDict is used by multi-optimizer configurations; the
+        # experiment uses one wrapper, but handling both keeps the hook safe.
+        if hasattr(optim_wrapper, "get_lr"):
+            lrs = optim_wrapper.get_lr()
+        else:
+            lrs = runner.get_lr()
     except Exception:  # pragma: no cover - runner API differences
         return float("nan")
     if isinstance(lrs, (list, tuple)) and lrs:
         return float(lrs[0])
     if isinstance(lrs, dict) and lrs:
-        return float(next(iter(lrs.values())))
+        value = next(iter(lrs.values()))
+        if isinstance(value, (list, tuple)) and value:
+            value = value[0]
+        return float(value)
     return float("nan")
 
 
@@ -159,6 +169,10 @@ class LayerScaleStatsHook(_LayerScaleHookMixin, Hook):
 
             self._handles.append(alpha.register_hook(hook))
 
+    def before_train(self, runner):
+        super().before_train(runner)
+        self._register_grad_hooks()
+
     def _remove_grad_hooks(self):
         for handle in self._handles:
             handle.remove()
@@ -203,7 +217,6 @@ class LayerScaleStatsHook(_LayerScaleHookMixin, Hook):
             _logger(runner).info(
                 f"LayerScaleStatsHook: writing layer statistics to {self._path}"
             )
-            self._register_grad_hooks()
 
         iteration = runner.iter + 1
         if iteration % self.interval != 0:
@@ -213,7 +226,7 @@ class LayerScaleStatsHook(_LayerScaleHookMixin, Hook):
         # A scalar alpha contributes a single number; a channel-wise alpha
         # contributes one per channel. Flatten so both shapes can be summarised.
         flat = (
-            torch.cat(alphas).float()
+            torch.cat([value.reshape(-1) for value in alphas]).float()
             if alphas
             else torch.zeros(0)
         )
@@ -315,6 +328,28 @@ class LayerScaleGuardHook(_LayerScaleHookMixin, Hook):
         self.ratio_streak = 0
         self.abort_reasons = []
         self.aborted = False
+        self._grad_finite = {}
+        self._grad_handles = []
+
+    def before_train(self, runner):
+        super().before_train(runner)
+        model = _unwrap_model(runner)
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+
+            def hook(grad, name=name):
+                # Keep the reduction on-device. All flags are materialised in
+                # one synchronization in after_train_iter.
+                self._grad_finite[name] = torch.isfinite(grad.detach()).all()
+
+            self._grad_handles.append(param.register_hook(hook))
+
+    def after_train(self, runner):
+        for handle in self._grad_handles:
+            handle.remove()
+        self._grad_handles = []
+        super().after_train(runner)
 
     # -- abort plumbing ---------------------------------------------------
     def _abort(self, runner, reason):
@@ -386,9 +421,24 @@ class LayerScaleGuardHook(_LayerScaleHookMixin, Hook):
                     if not torch.isfinite(value).item():
                         self._abort(runner, f"non-finite {key} at iter {iteration}")
                         return
-                elif isinstance(value, float) and value != value:
-                    self._abort(runner, f"NaN {key} at iter {iteration}")
+                elif isinstance(value, (int, float)) and not math.isfinite(value):
+                    self._abort(runner, f"non-finite {key} at iter {iteration}")
                     return
+
+        if self._grad_finite:
+            names = list(self._grad_finite)
+            flags = torch.stack([self._grad_finite[name] for name in names])
+            if not bool(flags.all().item()):
+                bad_flags = flags.detach().cpu().tolist()
+                bad_names = [name for name, ok in zip(names, bad_flags) if not ok]
+                self._grad_finite.clear()
+                self._abort(
+                    runner,
+                    f"non-finite gradient at iter {iteration}: "
+                    + ", ".join(bad_names[:8]),
+                )
+                return
+            self._grad_finite.clear()
 
         if not self.modules:
             return

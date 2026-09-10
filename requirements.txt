@@ -4,9 +4,8 @@
 # 目标机器：NVIDIA RTX 4090 D 24GB / CUDA 12.1
 # 建议 Python 3.10（mmcv 预编译轮子覆盖 cp38–cp311）
 #
-#   conda create -n cloud-adapter python=3.10 -y
+#   bash setup.sh
 #   conda activate cloud-adapter
-#   pip install -r requirements.txt
 #
 # 注意：mmcv / mmsegmentation / mmdet 之间存在**硬版本区间**，
 # 不是随便挑最新版就行。约束已从上游源码逐条核对：
@@ -54,7 +53,10 @@ einops>=0.6.1
 # thop / xformers 看着像"可选的效率工具"，实际是**硬依赖**——见下方 F 节。
 # 它们位于 `import cloud_adapter` 的模块级导入链上，缺一个就直接 ModuleNotFoundError。
 thop
-xformers
+# This is the xformers release whose package metadata requires torch==2.1.2.
+# Leaving it unpinned lets pip select a newer build and replace the ABI-pinned
+# torch/mmcv stack during setup.
+xformers==0.0.23.post1
 
 # numpy 必须 < 2：mmcv 2.1.0 的预编译轮子是对着 numpy 1.x 编的，
 # numpy 2.x 会触发 ABI 不兼容（_ARRAY_API not found / 直接崩）。
@@ -115,8 +117,8 @@ tifffile             # utils/stretch.py 用到
 #    scaled_dot_product_attention **数值不完全相同**，会轻微改变训练轨迹。
 #
 #    74.18 那次实验的环境没有记录，所以无法确定它当年走的是哪条路径。
-#    但现在的训练机上 xformers 是装的且生效的（跑 count_params 时会打印
-#    "xFormers is available (Attention/SwiGLU/Block)" 三条 warning）。
+#    setup.sh 会安装并锁定 xformers 0.0.23.post1；正常导入时 DINOv2 会默认
+#    启用它，并打印 "xFormers is available (Attention/SwiGLU/Block)" 提示。
 #
 #    这不影响实验 01 的内部有效性：B0 与 LS* 跑在同一环境，配对比较成立。
 #    只影响 §3 基线 gate 与论文 74.18 的**绝对值可比性**。

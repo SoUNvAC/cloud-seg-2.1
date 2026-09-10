@@ -118,11 +118,24 @@ def _train_cfg_options(spec):
 def train_run(spec, dry_run=False, force=False):
     directory = run_dir(spec.run_id)
     metrics_path = osp.join(directory, "metrics.json")
-    if osp.exists(metrics_path) and not force:
-        print(f"[run_matrix] {spec.run_id}: metrics.json exists, skipping training")
+    record = read_json(metrics_path, default={}) or {}
+    checkpoints = discover_checkpoints(spec.run_id)
+    aborted = read_json(osp.join(directory, "ABORTED.json"))
+    if record.get("status") == "complete" and not force:
+        print(f"[run_matrix] {spec.run_id}: completed metrics exist, skipping training")
+        return True
+    if aborted and not force:
+        print(
+            f"[run_matrix] {spec.run_id}: run is marked ABORTED; "
+            "use --force only after fixing the cause"
+        )
+        return False
+    if checkpoints.get("last_iter", -1) >= 40000 and not force:
+        print(f"[run_matrix] {spec.run_id}: final checkpoint exists, skipping training")
         return True
 
-    ensure_dir(directory)
+    if not dry_run:
+        ensure_dir(directory)
     cmd = [
         python_executable(),
         TRAIN,
@@ -132,6 +145,12 @@ def train_run(spec, dry_run=False, force=False):
         "--cfg-options",
         *_train_cfg_options(spec),
     ]
+    if checkpoints.get("last") and not force:
+        cmd.extend(["--resume", checkpoints["last"]])
+        print(
+            f"[run_matrix] {spec.run_id}: resuming from "
+            f"iteration {checkpoints.get('last_iter')}"
+        )
     started = time.time()
     code = run_command(cmd, osp.join(directory, "train.log"), dry_run=dry_run)
     elapsed = time.time() - started
@@ -222,18 +241,23 @@ def execute_run(spec, dry_run=False, force=False):
         return False
 
     aborted = read_json(osp.join(run_dir(spec.run_id), "ABORTED.json"))
+    evaluations_ok = True
     for split, which in _evaluation_plan(spec):
         checkpoint = checkpoints.get(which)
         if checkpoint is None:
             print(f"[run_matrix] {spec.run_id}: no {which} checkpoint, skipping {split}")
+            evaluations_ok = False
             continue
         if aborted and split == "test":
             # An aborted run must not inform anything about the test set.
             print(f"[run_matrix] {spec.run_id}: aborted, skipping test evaluation")
             continue
-        evaluate_run(spec, checkpoint, split, which, force=force)
+        evaluations_ok = (
+            evaluate_run(spec, checkpoint, split, which, force=force)
+            and evaluations_ok
+        )
 
-    return True
+    return evaluations_ok
 
 
 def _evaluation_plan(spec):
@@ -415,6 +439,16 @@ def stage_screen(args):
 
 def stage_main(args):
     selection = read_json(osp.join(EXP_DIR, "screening.json"))
+    if (not selection or selection.get("winner") is None) and args.dry_run:
+        selection = {
+            "winner": "<selected-scalar>",
+            "layer_scale_type": "scalar",
+            "layer_scale_init": 0.1,
+        }
+        print(
+            "[run_matrix] dry-run: using scalar/init=0.1 as a placeholder "
+            "for the validation-selected LS*"
+        )
     if not selection or selection.get("winner") is None:
         print("[run_matrix] no screening winner; run the `screen` stage first")
         return
@@ -449,6 +483,12 @@ def stage_collect(args):
 def stage_verify(args):
     """Protocol §10.7 for every LS* run (and the baseline, as a control)."""
     selection = read_json(osp.join(EXP_DIR, "screening.json"))
+    if (not selection or selection.get("winner") is None) and args.dry_run:
+        selection = {
+            "winner": "<selected-scalar>",
+            "layer_scale_type": "scalar",
+            "layer_scale_init": 0.1,
+        }
     if not selection or selection.get("winner") is None:
         print("[run_matrix] no screening winner; run the `screen` stage first")
         return
@@ -456,7 +496,9 @@ def stage_verify(args):
     for spec in specs:
         checkpoints = discover_checkpoints(spec.run_id)
         checkpoint = checkpoints.get("best") or checkpoints.get("last")
-        if checkpoint is None:
+        if checkpoint is None and args.dry_run:
+            checkpoint = "<checkpoint>"
+        elif checkpoint is None:
             print(f"[run_matrix] {spec.run_id}: no checkpoint, skipping verification")
             continue
         out = osp.join(run_dir(spec.run_id), "checkpoint_verify.json")
@@ -478,6 +520,12 @@ def stage_bench(args):
         return
 
     selection = read_json(osp.join(EXP_DIR, "screening.json")) or {}
+    if not selection.get("winner") and args.dry_run:
+        selection = {
+            "winner": "<selected-scalar>",
+            "layer_scale_type": "scalar",
+            "layer_scale_init": 0.1,
+        }
     specs = [baseline_specs()[1]]  # B0 seed 42, the seed used for screening
     if selection.get("winner"):
         specs += [spec for spec in main_specs(selection["layer_scale_type"],
@@ -487,7 +535,9 @@ def stage_bench(args):
     cmd = [python_executable(), BENCH, "--reference", specs[0].run_id]
     for spec in specs:
         checkpoint = discover_checkpoints(spec.run_id).get("best")
-        if checkpoint is None:
+        if checkpoint is None and args.dry_run:
+            checkpoint = "<checkpoint>"
+        elif checkpoint is None:
             print(f"[run_matrix] {spec.run_id}: no checkpoint, skipping benchmark")
             return
         cmd += ["--model", f"{spec.run_id}={spec.config_path}|{checkpoint}"]
@@ -545,7 +595,8 @@ def main():
                              "override in the report)")
     args = parser.parse_args()
 
-    ensure_dir(EXP_DIR)
+    if not args.dry_run:
+        ensure_dir(EXP_DIR)
 
     if args.only:
         for spec in baseline_specs() + screen_specs():
@@ -579,7 +630,7 @@ def main():
                 {"ignored": False, "reason": "gate failed, pipeline stopped"},
             )
             return
-        if not gate_passed:
+        if not gate_passed and not args.dry_run:
             write_json(
                 osp.join(EXP_DIR, "gate_override.json"),
                 {"ignored": True, "reason": "user passed --ignore-gate"},

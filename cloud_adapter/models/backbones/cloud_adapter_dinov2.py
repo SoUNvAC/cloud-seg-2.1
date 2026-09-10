@@ -104,9 +104,12 @@ class CloudAdapterDinoVisionTransformer(DinoVisionTransformer):
             return super().train(mode)
         set_requires_grad(self, ["cloud_adapter"])
         set_train(self, ["cloud_adapter"])
+        return self
 
-    def state_dict(self, destination, prefix, keep_vars):
-        state = super().state_dict(destination, prefix, keep_vars)
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        state = super().state_dict(
+            destination=destination, prefix=prefix, keep_vars=keep_vars
+        )
         keys = [k for k in state.keys() if "cloud_adapter" not in k]
         for key in keys:
             state.pop(key)
