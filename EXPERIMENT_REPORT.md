@@ -17,7 +17,7 @@
 | 项目 | 本机状态 |
 |---|---|
 | `data/cloudsen12_high_l1c` | 不存在 |
-| `checkpoints/dinov2_converted_512x512.pth` | 不存在 |
+| `checkpoints/dinov2_converted_512x512.pth` | 本机不存在；可用准备脚本下载 ViT-L/14 并转换 |
 | GPU | NVIDIA GeForce GTX 1060 6GB（6144 MiB） |
 | Conda | 未安装/不在 `PATH` |
 | `torch` / `mmengine` / `mmcv` / `mmseg` | 未安装 |
@@ -233,14 +233,17 @@ conda activate ca21
 
 # 可用其他环境名：CLOUD_ADAPTER_ENV=myenv sh setup.sh
 
-# 1. 确认数据集与 VFM 权重就位
+# 1. 准备 DINOv2-L/14 权重（首次会从 Meta 官方地址下载并转换）
+python tools/prepare_dinov2_checkpoint.py
+
+# 2. 确认数据集与 VFM 权重就位
 #    data/cloudsen12_high_l1c/{img_dir,ann_dir}/{train,val,test}
 #    checkpoints/dinov2_converted_512x512.pth
 
-# 2. 先只跑 dry-run，确认完整命令矩阵与路径无误
+# 3. 先只跑 dry-run，确认完整命令矩阵与路径无误
 python tools/experiment_01/run_matrix.py --dry-run all
 
-# 3. 全流程（含 §3 基线 gate；gate 失败会自动停下）
+# 4. 全流程（含 §3 基线 gate；gate 失败会自动停下）
 python tools/experiment_01/run_matrix.py all
 ```
 
@@ -304,6 +307,10 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * 补充 `future==1.0.0` 和 `tensorboard==2.21.0`。项目的
   `TensorboardVisBackend` 在 Runner 初始化时会导入这两项；安装后自检现在
   会实际导入 `torch.utils.tensorboard.SummaryWriter`，防止训练启动后才发现缺包。
+* 新增 `tools/prepare_dinov2_checkpoint.py`，从 Meta 官方地址下载
+  DINOv2-L/14，校验 1024 维、24 层结构后，生成实验需要的
+  `dinov2_converted_512x512.pth`。`run_matrix.py` 也会在训练前检查该文件；
+  若只找到 DINOv2-S（384 维、12 层），会明确报告架构不兼容，不会建议误改名。
 * `tools/train.py` 支持 `--resume` 自动或指定 checkpoint，且 `--amp` 能处理配置中
   省略 `optim_wrapper.type` 的常见写法；`tools/dist_train.sh` 改用 PyTorch 2.x 的
   `torch.distributed.run` 并补齐参数引用和错误退出。
@@ -325,11 +332,15 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
   测试、LS* 主实验、基准、checkpoint 校验、收集和分析命令均可生成；执行后确认
   `work_dirs/experiment_01` 不存在（无写入副作用）；
 * `python tools/experiment_01/analyze.py --help`：退出码 0；
+* `python tools/prepare_dinov2_checkpoint.py --help`：退出码 0；
+* 在 DINOv2-L 权重缺失时执行 `run_matrix.py baseline`：在 Runner 构建前
+  fail-fast，列出所需架构和准备命令，且不创建实验目录；
 * `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
   通过；
 * `sh -n setup.sh`、`bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
 * 使用不执行安装的伪 `conda` 命令走完 `setup.sh` 控制流：退出码 0；
 * `git diff --check`：通过。
 
-未执行：`sh setup.sh` 的真实安装、模型构建、前向/反向、训练与评测。本机没有
-Conda、数据集和 backbone checkpoint，且 GTX 1060 6 GB 不满足协议训练显存要求。
+未执行：`sh setup.sh` 的真实安装、DINOv2-L 的实际下载/转换、模型构建、
+前向/反向、训练与评测。本机没有 Conda、PyTorch、数据集和 backbone checkpoint，
+且 GTX 1060 6 GB 不满足协议训练显存要求。

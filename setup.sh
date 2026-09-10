@@ -56,4 +56,5 @@ conda run --no-capture-output --name "$ENV_NAME" python -c \
 
 log "environment is ready"
 printf '\nRun:\n  conda activate %s\n\n' "$ENV_NAME"
+printf 'Prepare the DINOv2-L checkpoint once:\n  python tools/prepare_dinov2_checkpoint.py\n\n'
 printf 'Then start with:\n  python tools/experiment_01/run_matrix.py --dry-run all\n'

@@ -68,6 +68,35 @@ BENCH = osp.join("tools", "experiment_01", "bench_latency.py")
 # ---------------------------------------------------------------------------
 # process helpers
 # ---------------------------------------------------------------------------
+def check_required_backbone():
+    """Fail before constructing a Runner when the ViT-L artifact is absent."""
+    required = osp.normpath(osp.join(REPO_ROOT, BACKBONE_CHECKPOINT))
+    if osp.isfile(required):
+        return
+
+    checkpoint_dir = osp.join(REPO_ROOT, "checkpoints")
+    available = []
+    if osp.isdir(checkpoint_dir):
+        available = sorted(
+            name for name in os.listdir(checkpoint_dir) if name.endswith(".pth")
+        )
+    found = ", ".join(available) if available else "(none)"
+    small_note = ""
+    if any("dinov2_s" in name or "dinov2_vits" in name for name in available):
+        small_note = (
+            "\nThe detected DINOv2-S checkpoint is incompatible: experiment 01 "
+            "uses DINOv2-L (embed_dim=1024, 24 blocks), not DINOv2-S "
+            "(embed_dim=384, 12 blocks)."
+        )
+    raise SystemExit(
+        "[run_matrix] missing required DINOv2-L checkpoint:\n"
+        f"  {required}\n"
+        f"Available .pth files: {found}{small_note}\n"
+        "Prepare the correct official checkpoint with:\n"
+        "  python tools/prepare_dinov2_checkpoint.py"
+    )
+
+
 def _display(cmd):
     return " ".join(cmd)
 
@@ -594,6 +623,10 @@ def main():
                         help="continue past a failed baseline gate (records the "
                              "override in the report)")
     args = parser.parse_args()
+
+    model_stages = {"baseline", "screen", "main", "bench", "verify", "all"}
+    if not args.dry_run and (args.only or args.stage in model_stages):
+        check_required_backbone()
 
     if not args.dry_run:
         ensure_dir(EXP_DIR)
