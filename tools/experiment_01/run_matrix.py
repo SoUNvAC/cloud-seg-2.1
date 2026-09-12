@@ -185,15 +185,20 @@ def train_run(spec, dry_run=False, force=False):
     elapsed = time.time() - started
 
     if not dry_run:
+        meta_path = osp.join(directory, "run_meta.json")
+        previous_meta = read_json(meta_path, default={}) or {}
+        previous_wall_sec = float(previous_meta.get("train_wall_sec", 0.0) or 0.0)
+        previous_attempts = int(previous_meta.get("train_attempts", 0) or 0)
         meta = spec.as_dict()
         meta.update(
             {
-                "train_wall_sec": round(elapsed, 2),
+                "train_wall_sec": round(previous_wall_sec + elapsed, 2),
+                "train_attempts": previous_attempts + 1,
                 "train_exit_code": code,
                 "log_interval": 500,
             }
         )
-        write_json(osp.join(directory, "run_meta.json"), meta)
+        write_json(meta_path, meta)
     return code == 0
 
 
@@ -634,14 +639,14 @@ def main():
     if args.only:
         for spec in baseline_specs() + screen_specs():
             if spec.run_id == args.only:
-                execute_run(spec, dry_run=args.dry_run, force=True)
+                execute_run(spec, dry_run=args.dry_run, force=args.force)
                 return
         selection = read_json(osp.join(EXP_DIR, "screening.json")) or {}
         if selection.get("winner"):
             for spec in main_specs(selection["layer_scale_type"],
                                    selection["layer_scale_init"]):
                 if spec.run_id == args.only:
-                    execute_run(spec, dry_run=args.dry_run, force=True)
+                    execute_run(spec, dry_run=args.dry_run, force=args.force)
                     return
         print(f"[run_matrix] unknown run id {args.only!r}")
         return

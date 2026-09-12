@@ -260,6 +260,16 @@ python tools/experiment_01/run_matrix.py collect
 python tools/experiment_01/run_matrix.py analyze
 ```
 
+若只想继续某个中断的 run，可指定 run ID；默认从最新 checkpoint
+续训，不要加 `--force`：
+
+```bash
+python tools/experiment_01/run_matrix.py baseline --only B0_seed13
+```
+
+checkpoint 每 4,000 iter 保存一次；如果在第一个 checkpoint 之前中断，
+该 run 只能从第 0 iter 重新开始。`--force` 用于明确要求重做，不用于普通续训。
+
 单次训练（不经流水线）：
 
 ```bash
@@ -324,6 +334,9 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * 修复流水线把 `incomplete` 错当成已完成的问题；中断 run 会从最新 checkpoint
   续训，评测失败也会向上返回失败状态；完整 dry-run 可继续展示 LS* 后续阶段，
   且不再创建 run 目录或写 `gate_override.json`。
+* 修复 `--only` 曾隐式启用 `force=True` 而无法续训的问题；现在
+  `--only <run_id>` 与 `all` 一样会自动从最新 checkpoint 继续，且
+  `run_meta.json` 会累计各次尝试的训练墙钟时间与次数。
 
 已执行的无数据验证：
 
@@ -335,6 +348,8 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * `python tools/prepare_dinov2_checkpoint.py --help`：退出码 0；
 * 在 DINOv2-L 权重缺失时执行 `run_matrix.py baseline`：在 Runner 构建前
   fail-fast，列出所需架构和准备命令，且不创建实验目录；
+* `python tools/experiment_01/run_matrix.py baseline --only B0_seed13 --dry-run`：
+  退出码 0，单 run 命令生成正常；`--only` 已与显式 `--force` 解耦；
 * `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
   通过；
 * `sh -n setup.sh`、`bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
