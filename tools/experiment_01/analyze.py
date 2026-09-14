@@ -354,8 +354,14 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
     mean_b0 = _mean(b0_test)
 
     # 1. mean(mIoU_LS*) >= B0 + 0.25
-    if mean_ls is not None and mean_b0 is not None:
+    metrics_complete = (
+        len(ls_test) == len(MAIN_SEEDS)
+        and len(b0_test) == len(BASELINE_SEEDS)
+        and all(value is not None for value in ls_test + b0_test)
+    )
+    if metrics_complete:
         conditions["1_mean_gain_at_least_0.25"] = {
+            "available": True,
             "passed": mean_ls >= mean_b0 + ACCEPT_MEAN_GAIN,
             "mean_mIoU_LS": round(mean_ls, 4),
             "mean_mIoU_B0": round(mean_b0, 4),
@@ -364,8 +370,9 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
         }
     else:
         conditions["1_mean_gain_at_least_0.25"] = {
+            "available": False,
             "passed": False,
-            "detail": "missing test metrics",
+            "detail": "requires all three paired baseline and LS* test metrics",
         }
 
     # 2. at least 2/3 seeds above their paired baseline
@@ -382,6 +389,7 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
         paired[str(seed)] = {"LS": ls_value, "B0": b0_value,
                              "delta": round(ls_value - b0_value, 4)}
     conditions["2_at_least_2_of_3_seeds_improve"] = {
+        "available": comparable == 3,
         "passed": comparable == 3 and wins >= ACCEPT_SEED_WINS,
         "wins": wins,
         "comparable_seeds": comparable,
@@ -395,7 +403,9 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
         if worst is None or entry["delta"] < worst[1]:
             worst = (seed, entry["delta"])
     conditions["3_no_seed_regression_over_0.15"] = {
-        "passed": bool(worst) and worst[1] >= -ACCEPT_MAX_SEED_REGRESSION,
+        "available": comparable == 3,
+        "passed": comparable == 3 and bool(worst)
+        and worst[1] >= -ACCEPT_MAX_SEED_REGRESSION,
         "worst_seed": worst[0] if worst else None,
         "worst_delta": worst[1] if worst else None,
         "threshold": -ACCEPT_MAX_SEED_REGRESSION,
@@ -410,7 +420,13 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
             default=None,
         )
         conditions["4_no_class_regression_over_0.40"] = {
-            "passed": bool(worst_class) and worst_class[1] >= -ACCEPT_MAX_CLASS_REGRESSION,
+            "available": (
+                worst_class is not None
+                and all(value is not None for value in class_deltas["delta"].values())
+            ),
+            "passed": bool(worst_class)
+            and all(value is not None for value in class_deltas["delta"].values())
+            and worst_class[1] >= -ACCEPT_MAX_CLASS_REGRESSION,
             "worst_class": worst_class[0] if worst_class else None,
             "worst_delta": worst_class[1] if worst_class else None,
             "threshold": -ACCEPT_MAX_CLASS_REGRESSION,
@@ -418,7 +434,9 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
         }
     else:
         conditions["4_no_class_regression_over_0.40"] = {
-            "passed": False, "detail": "missing per-class metrics"
+            "available": False,
+            "passed": False,
+            "detail": "requires per-class metrics for all paired runs",
         }
 
     # 5. at most 0.001M extra trainable parameters
@@ -438,6 +456,7 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
         if ls_value is not None and b0_value is not None:
             extra_params = ls_value - b0_value
     conditions["5_extra_params_within_0.001M"] = {
+        "available": extra_params is not None,
         "passed": extra_params is not None and extra_params <= ACCEPT_MAX_EXTRA_PARAMS_M * 1e6,
         "extra_params": extra_params,
         "threshold": ACCEPT_MAX_EXTRA_PARAMS_M * 1e6,
@@ -446,11 +465,13 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
     # 6. latency and peak memory within 1 %
     latency_check = (latency or {}).get("comparison") or {}
     conditions["6a_latency_within_1_percent"] = {
+        "available": latency_check.get("latency") is not None,
         "passed": bool(latency_check.get("latency_within_tolerance")),
         "detail": latency_check.get("latency"),
         "threshold": ACCEPT_MAX_LATENCY_INCREASE,
     }
     conditions["6b_peak_memory_within_1_percent"] = {
+        "available": latency_check.get("memory") is not None,
         "passed": bool(latency_check.get("memory_within_tolerance")),
         "detail": latency_check.get("memory"),
         "threshold": ACCEPT_MAX_MEMORY_INCREASE,
@@ -458,20 +479,40 @@ def evaluate_acceptance(bootstrap, class_deltas, latency, checkpoint_verify):
 
     # 7. frozen VFM + checkpoint restores every alpha_l
     verify = checkpoint_verify or {}
+    verify_available = (
+        verify.get("all_runs_verified") is True
+        and verify.get("num_runs") == len(MAIN_SEEDS)
+    )
     conditions["7_vfm_frozen_and_alpha_restorable"] = {
-        "passed": bool(verify.get("passed")),
+        "available": verify_available,
+        "passed": verify_available and bool(verify.get("passed")),
         "detail": verify,
     }
 
-    passed = all(entry.get("passed") for entry in conditions.values())
+    unavailable = [
+        name for name, entry in conditions.items() if not entry.get("available")
+    ]
+    if not (bootstrap or {}).get("available"):
+        unavailable.append("paired_bootstrap")
+    complete = not unavailable
+    passed = complete and all(entry.get("passed") for entry in conditions.values())
+    status = "PASS" if passed else ("FAIL" if complete else "INCOMPLETE")
     return {
+        "status": status,
+        "complete": complete,
         "passed": passed,
+        "unavailable": unavailable,
         "conditions": conditions,
         "verdict": (
             "SUCCESS — every protocol §10 condition is satisfied"
             if passed
-            else "FAILED — at least one protocol §10 condition is not satisfied; "
-                 "a positive trend is not a substitute for success"
+            else (
+                "FAILED — complete evidence is available and at least one protocol "
+                "§10 condition is not satisfied"
+                if complete
+                else "INCOMPLETE — required evidence is missing; no scientific "
+                     "success/failure verdict can be made"
+            )
         ),
     }
 
@@ -644,7 +685,12 @@ def make_plots(plot_dir):
 def render_acceptance_md(acceptance, bootstrap, class_deltas, gate, latency,
                          checkpoint_verify):
     lines = ["# Experiment 01 — acceptance checklist", ""]
-    lines.append(f"**Verdict: {'PASS' if acceptance['passed'] else 'FAIL'}**")
+    lines.append(f"**Verdict: {acceptance['status']}**")
+    if acceptance.get("unavailable"):
+        lines.append("")
+        lines.append(
+            "Missing evidence: " + ", ".join(acceptance["unavailable"]) + "."
+        )
     lines.append("")
     lines.append("| §10 | condition | result | detail |")
     lines.append("|---|---|---|---|")
@@ -658,9 +704,13 @@ def render_acceptance_md(acceptance, bootstrap, class_deltas, gate, latency,
             detail = ", ".join(
                 f"{k}={v}" for k, v in entry.items() if k not in ("passed", "threshold")
             )
+        result = (
+            "N/A" if not entry.get("available")
+            else ("PASS" if entry.get("passed") else "FAIL")
+        )
         lines.append(
             f"| {clause} | {label.replace('_', ' ')} | "
-            f"{'PASS' if entry.get('passed') else 'FAIL'} | {detail} |"
+            f"{result} | {detail} |"
         )
     lines.append("")
 
@@ -756,7 +806,7 @@ def main():
         handle.write(md)
 
     plots = make_plots(EXP_DIR)
-    print(f"[analyze] verdict: {'PASS' if acceptance['passed'] else 'FAIL'}")
+    print(f"[analyze] verdict: {acceptance['status']}")
     for path in plots:
         print(f"[analyze] plot -> {path}")
 

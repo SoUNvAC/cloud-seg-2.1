@@ -239,8 +239,9 @@ S0–S5 虽有训练耗时、显存和 LayerScale 日志，但 `val_mIoU` 全为
 按协议 §1 的判据：**"只有第 10 节全部主验收条件同时满足，才记为成功；
 任一主条件未满足即记为失败。"** 当前数据不足，状态是**实验未完成**，
 不能判为成功或失败。
-`analyze.py` 在数据缺失时一律 fail-closed（判定为 FAIL 并注明
-"missing ..."），不会把缺失误报成通过。
+`analyze.py` 对验收采用三态输出：证据齐全且达标为 `PASS`，证据齐全但
+未达标为 `FAIL`，缺少必需证据为 `INCOMPLETE`。三种状态中只有 `PASS`
+会令机器可读字段 `passed=true`，因此不会把缺失误报成通过。
 
 ---
 
@@ -377,6 +378,10 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
   问题；`baseline`、`screen`、`main`、`collect` 任一必要阶段不完整时现在返回
   非零退出码。同时在消耗 GPU 时间前检查 train/val/test 三个划分的
   PNG 目录、数量及图像/标注配对，避免评测失败却被误认为“12 次训练结束”。
+* 修复 `analyze.py` 在必需数据缺失时仍显示 `FAIL` 的语义混淆；缺失 LS*、
+  配对测试指标、类别指标、参数、延迟/显存、checkpoint 校验或 bootstrap
+  时现在输出 `INCOMPLETE`，条件表对应项显示 `N/A`。只有证据齐全后未达
+  §10 门槛才输出 `FAIL`。
 
 已执行的无数据验证：
 
@@ -395,6 +400,9 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
   样本标准差 0.1637、极差 0.32、B0_seed42 与论文值差 0.22；
 * 数据集预检在本机缺失 train/val/test 时正确返回非零退出码并列出
   6 个缺失目录；修复后的 `run_matrix.py --dry-run all` 退出码 0；
+* `evaluate_acceptance` 的三组独立情形测试：缺必需证据输出
+  `INCOMPLETE` 且 Markdown 显示 `N/A`；完整证据达标输出 `PASS`；
+  完整证据未达标输出 `FAIL`；
 * `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
   通过；
 * `sh -n setup.sh`、`bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
