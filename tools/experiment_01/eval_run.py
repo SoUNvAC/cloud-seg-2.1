@@ -40,6 +40,21 @@ def parse_args():
     return parser.parse_args()
 
 
+def remove_training_checkpoint_hook(cfg):
+    """Remove CheckpointHook from a Runner that only executes val/test.
+
+    MMEngine initializes CheckpointHook.file_backend in ``before_train``.  A
+    standalone ``runner.val()`` never calls that lifecycle method, but the hook
+    still receives ``after_val_epoch`` and tries to save the best checkpoint.
+    Evaluation is read-only, so retaining that hook is both unnecessary and
+    invalid.
+    """
+    default_hooks = dict(cfg.get("default_hooks", {}))
+    removed = default_hooks.pop("checkpoint", None)
+    cfg.default_hooks = default_hooks
+    return removed is not None
+
+
 def main():
     args = parse_args()
 
@@ -47,6 +62,9 @@ def main():
     cfg.launcher = "none"
     if args.cfg_options:
         cfg.merge_from_dict(args.cfg_options)
+
+    if remove_training_checkpoint_hook(cfg):
+        print("[eval_run] disabled training-only CheckpointHook")
 
     cfg.work_dir = args.work_dir
     cfg.load_from = args.checkpoint

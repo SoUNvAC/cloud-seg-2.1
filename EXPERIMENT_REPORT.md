@@ -212,6 +212,11 @@ S0–S5 虽有训练耗时、显存和 LayerScale 日志，但 `val_mIoU` 全为
 状态全为 `incomplete`。因此不能选出 LS*，也不能将这 6 行视为已完成的
 筛选实验。
 
+后续日志定位到共同原因：`eval_run.py` 的独立验证 Runner 保留了训练用
+`CheckpointHook`。该 Hook 的 `file_backend` 只在 `before_train` 初始化，
+但纯 `runner.val()` 不会触发该生命周期，导致验证结束保存 best checkpoint 时
+抛出 `AttributeError`。独立评测现已移除该 Hook，已有训练 checkpoint 无需重训。
+
 ---
 
 ## 5. 协议 §10 验收清单
@@ -385,6 +390,9 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * 单独重试 `--only <run_id>` 成功后现在会自动重新生成该 run 的
   `metrics.json`；对筛选 run 还会立即刷新 `screening.json`。`analyze.py`
   输出 `INCOMPLETE` 时也会打印应执行的下一个流水线命令。
+* 修复独立 val/test Runner 携带训练用 `CheckpointHook` 的问题。独立评测
+  现在于 `Runner.from_cfg` 之前移除该 Hook，避免 `runner.val()` 在
+  `after_val_epoch` 访问未初始化的 `file_backend`；评测本身不再写 checkpoint。
 
 已执行的无数据验证：
 
@@ -406,6 +414,8 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * `evaluate_acceptance` 的三组独立情形测试：缺必需证据输出
   `INCOMPLETE` 且 Markdown 显示 `N/A`；完整证据达标输出 `PASS`；
   完整证据未达标输出 `FAIL`；
+* 独立评测 Hook 隔离测试：确认仅移除 `checkpoint`，保留
+  `timer`、`logger` 等其他默认 Hook，且重复执行幂等；
 * `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
   通过；
 * `sh -n setup.sh`、`bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；
