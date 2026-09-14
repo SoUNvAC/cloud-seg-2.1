@@ -382,6 +382,9 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
   配对测试指标、类别指标、参数、延迟/显存、checkpoint 校验或 bootstrap
   时现在输出 `INCOMPLETE`，条件表对应项显示 `N/A`。只有证据齐全后未达
   §10 门槛才输出 `FAIL`。
+* 单独重试 `--only <run_id>` 成功后现在会自动重新生成该 run 的
+  `metrics.json`；对筛选 run 还会立即刷新 `screening.json`。`analyze.py`
+  输出 `INCOMPLETE` 时也会打印应执行的下一个流水线命令。
 
 已执行的无数据验证：
 

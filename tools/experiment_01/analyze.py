@@ -807,6 +807,18 @@ def main():
 
     plots = make_plots(EXP_DIR)
     print(f"[analyze] verdict: {acceptance['status']}")
+    if acceptance["status"] == "INCOMPLETE":
+        selection = read_json(osp.join(EXP_DIR, "screening.json")) or {}
+        if not selection.get("winner"):
+            print(
+                "[analyze] next: validation screening is incomplete; run "
+                "`python tools/experiment_01/run_matrix.py screen`"
+            )
+        else:
+            print(
+                "[analyze] next: run `python tools/experiment_01/"
+                "run_matrix.py all` to complete missing stages"
+            )
     for path in plots:
         print(f"[analyze] plot -> {path}")
 

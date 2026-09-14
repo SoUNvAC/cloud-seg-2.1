@@ -694,6 +694,13 @@ def main():
                 ok = execute_run(spec, dry_run=args.dry_run, force=args.force)
                 if not ok:
                     raise SystemExit(f"[run_matrix] {spec.run_id} incomplete")
+                if not args.dry_run:
+                    if not collect_runs([spec.run_id], args):
+                        raise SystemExit(
+                            f"[run_matrix] could not collect {spec.run_id}"
+                        )
+                    if spec.stage == "screen":
+                        select_ls_star()
                 return
         selection = read_json(osp.join(EXP_DIR, "screening.json")) or {}
         if selection.get("winner"):
@@ -703,6 +710,10 @@ def main():
                     ok = execute_run(spec, dry_run=args.dry_run, force=args.force)
                     if not ok:
                         raise SystemExit(f"[run_matrix] {spec.run_id} incomplete")
+                    if not args.dry_run and not collect_runs([spec.run_id], args):
+                        raise SystemExit(
+                            f"[run_matrix] could not collect {spec.run_id}"
+                        )
                     return
         print(f"[run_matrix] unknown run id {args.only!r}")
         return
