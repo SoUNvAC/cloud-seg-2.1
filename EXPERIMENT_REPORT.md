@@ -181,22 +181,42 @@ optim_wrapper = dict(paramwise_cfg=dict(custom_keys={".alpha": alpha_multi}))
 
 | 阶段 | run | 种子 | 评测集 | 状态 |
 |---|---|---|---|---|
-| env | — | — | — | 未执行 |
-| baseline | `B0_seed{13,42,3407}` | 13/42/3407 | val + test | 未执行 |
-| gate | 协议 §3 | — | test | 未执行 |
-| screen | `S0…S5_seed42` | 42 | **仅 val** | 未执行 |
-| main | `LSstar_<type>_init<v>_seed{13,42,3407}` | 13/42/3407 | val + test | 未执行 |
-| bench | B0-42 / LS*-42 | 42 | — | 未执行 |
-| verify | 三个 LS* run | 13/42/3407 | — | 未执行 |
-| collect / analyze | 全部 | — | — | 未执行 |
+| env | — | — | — | `summary.csv` 未记录 |
+| baseline | `B0_seed{13,42,3407}` | 13/42/3407 | test 已评测，val 缺失 | **3/3 complete** |
+| gate | 协议 §3 | — | test | **PASS（由总表复核）** |
+| screen | `S0…S5_seed42` | 42 | **仅 val** | **6/6 incomplete；val 指标全缺失** |
+| main | `LSstar_<type>_init<v>_seed{13,42,3407}` | 13/42/3407 | val + test | 未产生（0/3 行） |
+| bench | B0-42 / LS*-42 | 42 | — | 未记录 |
+| verify | 三个 LS* run | 13/42/3407 | — | 未记录 |
+| collect / analyze | 全部 | — | — | 部分；总表 9/12 行 |
 
 共 3（基线）+ 6（筛选）+ 3（主实验）= **12 次训练**，另加评测、基准与校验。
+
+### 4.1 2026-09-14 总表快照
+
+用户提供的 `summary.csv` 共 9 行：3 个基线和 6 个筛选 run。
+已取得的基线测试结果为：
+
+| run | test mIoU | final-ckpt test mIoU | aAcc | mAcc | mDice |
+|---|---:|---:|---:|---:|---:|
+| B0_seed13 | 74.18 | 74.18 | 90.18 | 84.80 | 84.45 |
+| B0_seed42 | 73.96 | 73.96 | 90.07 | 84.57 | 84.28 |
+| B0_seed3407 | 73.86 | 73.86 | 90.00 | 84.64 | 84.21 |
+| 均值 ± 样本标准差 | **74.00 ± 0.16** | **74.00 ± 0.16** | — | — | — |
+
+基线种子极差为 **0.32 mIoU**；B0_seed42 与论文 74.18 的绝对差为
+**0.22 mIoU**，因此 §3 的两个数值门槛（0.80 和 0.30）均通过，
+且三个基线记录均为 `complete`。
+
+S0–S5 虽有训练耗时、显存和 LayerScale 日志，但 `val_mIoU` 全为空且
+状态全为 `incomplete`。因此不能选出 LS*，也不能将这 6 行视为已完成的
+筛选实验。
 
 ---
 
 ## 5. 协议 §10 验收清单
 
-> 以下每一条均为**未记录**：本机无法产出任何训练/评测数值。
+> 由于筛选验证指标和 3 个 LS* 主实验仍缺失，以下 §10 条件均无法判定。
 
 | §10 | 条件 | 结果 | 数值 |
 |---|---|---|---|
@@ -209,14 +229,16 @@ optim_wrapper = dict(paramwise_cfg=dict(custom_keys={".alpha": alpha_multi}))
 | 6b | 峰值显存增幅 ≤ 1% | 未记录 | 未记录 |
 | 7 | DINOv2 全冻结且 checkpoint 可独立恢复全部 α_l | 未记录 | 未记录 |
 
-§3 基线 gate：**未记录**（`|mIoU(B0-42) − 74.18| ≤ 0.30`、三种子极差 ≤ 0.80）。
+§3 基线 gate：**PASS**。`|73.96 − 74.18| = 0.22 ≤ 0.30`；
+三种子极差 `74.18 − 73.86 = 0.32 ≤ 0.80`。
 
-配对统计（§9）：三种子配对差值、10,000 次按测试图像的配对 bootstrap 95% CI、
-`bootstrap.json`、`summary.csv`、`acceptance.json`、`acceptance.md`、
-`alpha_layers.png`、`residual_ratio.png` —— 全部为**未记录**。
+配对统计（§9）：`summary.csv` 已生成但仅有 9/12 行；三种子配对差值、
+10,000 次按测试图像的配对 bootstrap 95% CI、`bootstrap.json`、
+`acceptance.json`、`acceptance.md`、`alpha_layers.png`、`residual_ratio.png` 仍未取得。
 
 按协议 §1 的判据：**"只有第 10 节全部主验收条件同时满足，才记为成功；
-任一主条件未满足即记为失败。"** 当前既未满足也未失败，状态是**未执行**。
+任一主条件未满足即记为失败。"** 当前数据不足，状态是**实验未完成**，
+不能判为成功或失败。
 `analyze.py` 在数据缺失时一律 fail-closed（判定为 FAIL 并注明
 "missing ..."），不会把缺失误报成通过。
 
@@ -260,6 +282,20 @@ python tools/experiment_01/run_matrix.py collect
 python tools/experiment_01/run_matrix.py analyze
 ```
 
+训练全部结束后，重新收集各 run 产物并生成总表：
+
+```bash
+python tools/experiment_01/run_matrix.py collect
+python tools/experiment_01/run_matrix.py analyze
+
+# CSV 含 1 行表头 + 12 行实验，正常应输出 13
+wc -l work_dirs/experiment_01/summary.csv
+```
+
+对外汇报的主表为 `work_dirs/experiment_01/summary.csv`。同时保留
+`acceptance.md`、`bootstrap.json`、`baseline_gate.json` 和 `latency.json`，
+分别用于查看总验收结论、配对 bootstrap、基线门禁与延迟/显存结果。
+
 若只想继续某个中断的 run，可指定 run ID；默认从最新 checkpoint
 续训，不要加 `--force`：
 
@@ -287,11 +323,11 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 
 ## 7. 未记录数据总清单
 
-以下数据协议明确要求，但本次**均未取得**，报告中不得以任何形式推测填充：
+截至 2026-09-14，以下协议数据仍未取得，报告中不得以任何形式推测填充：
 
-* 全部 12 次训练的 mIoU / aAcc / mAcc / mDice / 各类别 IoU（val 与 test）；
+* 3 个基线的 val 指标；S0–S5 的 val 指标；3 个 LS* 主实验的
+  mIoU / aAcc / mAcc / mDice / 各类别 IoU；
 * 三种子均值、标准差、95% bootstrap CI；
-* §3 基线 gate 的三个数值（B0-42 的 mIoU、与 74.18 的差值、三种子极差）；
 * S0–S5 的验证 mIoU 与 LS* 的选择结果；
 * 24 层 α_l 的最终值、均值/标准差/最大绝对值、梯度范数；
 * 24 层的残差比 `‖α_l δ_l‖/‖x_l‖`（整体、末段、逐层）；
@@ -337,6 +373,10 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
 * 修复 `--only` 曾隐式启用 `force=True` 而无法续训的问题；现在
   `--only <run_id>` 与 `all` 一样会自动从最新 checkpoint 继续，且
   `run_meta.json` 会累计各次尝试的训练墙钟时间与次数。
+* 根据 2026-09-14 的部分总表，修复训练/评测失败没有向流水线顶层传播的
+  问题；`baseline`、`screen`、`main`、`collect` 任一必要阶段不完整时现在返回
+  非零退出码。同时在消耗 GPU 时间前检查 train/val/test 三个划分的
+  PNG 目录、数量及图像/标注配对，避免评测失败却被误认为“12 次训练结束”。
 
 已执行的无数据验证：
 
@@ -350,6 +390,11 @@ python tools/train.py configs/experiment_01/main_ls_star.py \
   fail-fast，列出所需架构和准备命令，且不创建实验目录；
 * `python tools/experiment_01/run_matrix.py baseline --only B0_seed13 --dry-run`：
   退出码 0，单 run 命令生成正常；`--only` 已与显式 `--force` 解耦；
+* 用绑定数据分析环境独立解析用户提供的 `summary.csv`：确认 9 行、
+  3 complete / 6 incomplete、全部 val 列缺失、主实验 0 行；基线均值 74.00、
+  样本标准差 0.1637、极差 0.32、B0_seed42 与论文值差 0.22；
+* 数据集预检在本机缺失 train/val/test 时正确返回非零退出码并列出
+  6 个缺失目录；修复后的 `run_matrix.py --dry-run all` 退出码 0；
 * `_current_lr` 对 MMEngine 的 `{'lr': [value]}` 和 list 两种返回形式的单元用例：
   通过；
 * `sh -n setup.sh`、`bash -n setup.sh` 与 `bash -n tools/dist_train.sh`：通过；

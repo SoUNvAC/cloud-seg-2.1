@@ -38,6 +38,7 @@ from common import (  # noqa: E402
     BASELINE_GATE_ABS,
     BASELINE_GATE_RANGE,
     BASELINE_SEEDS,
+    DATASET_ROOT,
     EXP_DIR,
     MAIN_SEEDS,
     PAPER_MIOU_L1C,
@@ -95,6 +96,42 @@ def check_required_backbone():
         "Prepare the correct official checkpoint with:\n"
         "  python tools/prepare_dinov2_checkpoint.py"
     )
+
+
+def check_required_dataset():
+    """Verify all protocol splits before spending GPU time."""
+    expected_sizes = {"train": 8490, "val": 535, "test": 975}
+    problems = []
+    for split, expected in expected_sizes.items():
+        counts = {}
+        for folder in ("img_dir", "ann_dir"):
+            path = osp.join(REPO_ROOT, DATASET_ROOT, folder, split)
+            if not osp.isdir(path):
+                problems.append(f"missing directory: {path}")
+                continue
+            count = sum(
+                entry.is_file() and entry.name.lower().endswith(".png")
+                for entry in os.scandir(path)
+            )
+            counts[folder] = count
+            if count != expected:
+                problems.append(
+                    f"{path}: found {count} PNG files, expected {expected}"
+                )
+        if len(counts) == 2 and counts["img_dir"] != counts["ann_dir"]:
+            problems.append(
+                f"{split}: image/annotation count mismatch "
+                f"({counts['img_dir']} vs {counts['ann_dir']})"
+            )
+    if problems:
+        detail = "\n  ".join(problems)
+        raise SystemExit(
+            "[run_matrix] dataset preflight failed:\n"
+            f"  {detail}\n"
+            "Experiment 01 requires the converted train/val/test splits. "
+            "Regenerate missing data with tools/convert_datasets/"
+            "create_l1c_l2a.py before training."
+        )
 
 
 def _display(cmd):
@@ -459,16 +496,24 @@ def stage_env(args):
 
 def stage_baseline(args):
     specs = baseline_specs()
-    for spec in specs:
+    runs_ok = [
         execute_run(spec, dry_run=args.dry_run, force=args.force)
-    collect_runs([spec.run_id for spec in specs], args)
+        for spec in specs
+    ]
+    collect_ok = collect_runs([spec.run_id for spec in specs], args)
+    return all(runs_ok) and collect_ok
 
 
 def stage_screen(args):
-    for spec in screen_specs():
+    specs = screen_specs()
+    runs_ok = [
         execute_run(spec, dry_run=args.dry_run, force=args.force)
-    collect_runs([spec.run_id for spec in screen_specs()], args)
-    select_ls_star(dry_run=args.dry_run)
+        for spec in specs
+    ]
+    collect_ok = collect_runs([spec.run_id for spec in specs], args)
+    selection = select_ls_star(dry_run=args.dry_run)
+    selected = args.dry_run or selection.get("winner") is not None
+    return all(runs_ok) and collect_ok and selected
 
 
 def stage_main(args):
@@ -485,21 +530,27 @@ def stage_main(args):
         )
     if not selection or selection.get("winner") is None:
         print("[run_matrix] no screening winner; run the `screen` stage first")
-        return
+        return False
     specs = main_specs(selection["layer_scale_type"], selection["layer_scale_init"])
-    for spec in specs:
+    runs_ok = [
         execute_run(spec, dry_run=args.dry_run, force=args.force)
-    collect_runs([spec.run_id for spec in specs], args)
+        for spec in specs
+    ]
+    collect_ok = collect_runs([spec.run_id for spec in specs], args)
+    return all(runs_ok) and collect_ok
 
 
 def collect_runs(run_ids, args):
+    ok = True
     for run_id in run_ids:
-        run_command(
+        code = run_command(
             [python_executable(), osp.join("tools", "experiment_01", "collect_run.py"),
              run_id],
             osp.join(run_dir(run_id), "collect_run.log"),
             dry_run=args.dry_run,
         )
+        ok = code == 0 and ok
+    return ok
 
 
 def stage_collect(args):
@@ -511,7 +562,7 @@ def stage_collect(args):
             main_run_id(selection["layer_scale_type"], selection["layer_scale_init"], seed)
             for seed in MAIN_SEEDS
         ]
-    collect_runs(run_ids, args)
+    return collect_runs(run_ids, args)
 
 
 def stage_verify(args):
@@ -632,6 +683,7 @@ def main():
     model_stages = {"baseline", "screen", "main", "bench", "verify", "all"}
     if not args.dry_run and (args.only or args.stage in model_stages):
         check_required_backbone()
+        check_required_dataset()
 
     if not args.dry_run:
         ensure_dir(EXP_DIR)
@@ -639,21 +691,29 @@ def main():
     if args.only:
         for spec in baseline_specs() + screen_specs():
             if spec.run_id == args.only:
-                execute_run(spec, dry_run=args.dry_run, force=args.force)
+                ok = execute_run(spec, dry_run=args.dry_run, force=args.force)
+                if not ok:
+                    raise SystemExit(f"[run_matrix] {spec.run_id} incomplete")
                 return
         selection = read_json(osp.join(EXP_DIR, "screening.json")) or {}
         if selection.get("winner"):
             for spec in main_specs(selection["layer_scale_type"],
                                    selection["layer_scale_init"]):
                 if spec.run_id == args.only:
-                    execute_run(spec, dry_run=args.dry_run, force=args.force)
+                    ok = execute_run(spec, dry_run=args.dry_run, force=args.force)
+                    if not ok:
+                        raise SystemExit(f"[run_matrix] {spec.run_id} incomplete")
                     return
         print(f"[run_matrix] unknown run id {args.only!r}")
         return
 
     if args.stage == "all":
         stage_env(args)
-        stage_baseline(args)
+        if not stage_baseline(args):
+            raise SystemExit(
+                "[run_matrix] baseline stage incomplete; inspect the run logs "
+                "and rerun `all` after fixing the cause"
+            )
         gate_passed = stage_gate(args)
         if not gate_passed and not args.dry_run and not args.ignore_gate:
             print(
@@ -673,15 +733,25 @@ def main():
                 osp.join(EXP_DIR, "gate_override.json"),
                 {"ignored": True, "reason": "user passed --ignore-gate"},
             )
-        stage_screen(args)
-        stage_main(args)
+        if not stage_screen(args):
+            raise SystemExit(
+                "[run_matrix] screening stage incomplete; validation metrics "
+                "are required before selecting LS*"
+            )
+        if not stage_main(args):
+            raise SystemExit(
+                "[run_matrix] main stage incomplete; inspect the run logs and "
+                "rerun `all` after fixing the cause"
+            )
         stage_bench(args)
         stage_verify(args)
         stage_collect(args)
         stage_analyze(args)
         return
 
-    STAGES[args.stage](args)
+    result = STAGES[args.stage](args)
+    if result is False:
+        raise SystemExit(f"[run_matrix] {args.stage} stage incomplete")
 
 
 if __name__ == "__main__":
